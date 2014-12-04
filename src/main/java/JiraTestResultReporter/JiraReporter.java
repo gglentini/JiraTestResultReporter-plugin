@@ -15,8 +15,13 @@ import hudson.util.FormValidation;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 
-import org.apache.http.HttpResponse;
-import org.apache.http.auth.AuthenticationException;
+import com.mashape.unirest.http.HttpResponse;
+import com.mashape.unirest.http.JsonNode;
+import com.mashape.unirest.http.Unirest;
+import com.mashape.unirest.http.exceptions.UnirestException;
+
+//import org.apache.http.HttpResponse;
+/*import org.apache.http.auth.AuthenticationException;
 import org.apache.http.auth.AuthScope;
 import org.apache.http.auth.Credentials;
 import org.apache.http.auth.UsernamePasswordCredentials;
@@ -24,7 +29,7 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.auth.BasicScheme;
 import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.impl.client.AbstractHttpClient;
+import org.apache.http.impl.client.AbstractHttpClient;*/
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -32,7 +37,7 @@ import java.io.StringWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.List;
-import javax.json.*;
+//import javax.json.*;
 
 public class JiraReporter extends Notifier {
 
@@ -47,7 +52,7 @@ public class JiraReporter extends Notifier {
 
     private transient FilePath workspace;
 
-    private static final int JIRA_SUCCESS_CODE = 201;
+    private static final int JIRA_SUCCESS_CODE = 200;
 
     private static final String PluginName = new String("[JiraTestResultReporter]");
     private final String pInfo = String.format("%s [INFO]", PluginName);
@@ -109,7 +114,7 @@ public class JiraReporter extends Notifier {
         }
         else {
             List<CaseResult> failedTests = testResultAction.getFailedTests();
-            printResultItems(failedTests, listener);
+            //printResultItems(failedTests, listener);
             createJiraIssue(failedTests, build, listener);
             logger.printf("%s Done.%n", pInfo);
         }
@@ -154,71 +159,53 @@ public class JiraReporter extends Notifier {
                           final AbstractBuild build,
                           final BuildListener listener) {
         PrintStream logger = listener.getLogger();
-        String url = this.serverAddress + "rest/api/2/issue/";
+        String url = this.serverAddress + "rest/api/latest/";
+         String jiraApiUrlSearch = url + "search";
 
         for (CaseResult result : failedTests) {
-            if ((result.getAge() == 1) || (this.createAllFlag)) {
-//          if (result.getAge() > 0) {
+            try {
+                HttpResponse<JsonNode> jsonResponse = Unirest.get(jiraApiUrlSearch)
+                        //.header("accept", "application/json")
+                        //.field("jql", "project = TEST AND status in (Open, \"In Progress\") AND reporter in (lentini)")
+                        .basicAuth(this.username, this.password)
+                        .queryString("jql", "project = TEST AND status in (Open, \"In Progress\") " +
+                                "AND reporter in (lentini) AND summary ~ \"Test " + result.getName() + " failed\"")
+                        .queryString("fields", "summary")
+                        .asJson();
+
                 debugLog(listener,
-                         String.format("Creating issue in project %s at URL %s%n",
-                            this.projectKey, url)
-                        );
-                try {
-                    DefaultHttpClient httpClient = new DefaultHttpClient();
-                    Credentials creds = new UsernamePasswordCredentials(this.username, this.password);
-                    ((AbstractHttpClient) httpClient).getCredentialsProvider().setCredentials(AuthScope.ANY, creds);
+                        String.format("statusLine: %s%n",
+                                jsonResponse.getStatusText())
+                );
+                debugLog(listener,
+                        String.format("statusCode: %d%n",
+                                jsonResponse.getStatus())
+                );
 
-                    HttpPost postRequest = new HttpPost(url);
-                    String summary = "Test " + result.getName() + " failed";
-                    String description = "Test class: " + result.getClassName() + "\n\n" +
-                                         "Jenkins job: " + build.getAbsoluteUrl() + "\n\n" +
-                                         "{noformat}\n" + result.getErrorDetails() + "\n{noformat}\n\n" +
-                                         "{noformat}\n" + result.getErrorStackTrace().replace(this.workspace.toString(), "") + "\n{noformat}\n\n";
-                    JsonObjectBuilder issuetype = Json.createObjectBuilder().add("name", "Bug");
-                    JsonObjectBuilder project = Json.createObjectBuilder().add("key", this.projectKey);
-                    JsonObjectBuilder fields = Json.createObjectBuilder().add("project", project)
-                                                                  .add("summary", summary)
-                                                                  .add("description", description)
-                                                                  .add("issuetype", issuetype);
-                    JsonObjectBuilder payload = Json.createObjectBuilder().add("fields", fields);
-                    StringWriter stWriter = new StringWriter();
-                    JsonWriter jsonWriter = Json.createWriter(stWriter);
-                    jsonWriter.writeObject(payload.build());
-                    jsonWriter.close();
-                    String jsonPayLoad = stWriter.toString();
-//                     logger.printf("%s JSON payload: %n", pVerbose, jsonPayLoad);
-                    logger.printf("%s Reporting issue.%n", pInfo);
-                    StringEntity params = new StringEntity(jsonPayLoad);
-                    params.setContentType("application/json");
-                    postRequest.setEntity(params);
-                    try {
-                        postRequest.addHeader(new BasicScheme().authenticate(new UsernamePasswordCredentials(this.username, this.password), postRequest));
-                    } catch (AuthenticationException a) {
-                        a.printStackTrace();
-                    }
-
-                    HttpResponse response = httpClient.execute(postRequest);
-                    debugLog(listener,
-                             String.format("statusLine: %s%n",
-                                response.getStatusLine())
-                            );
-                    debugLog(listener,
-                             String.format("statusCode: %d%n",
-                                response.getStatusLine().getStatusCode())
-                            );
-                    if (response.getStatusLine().getStatusCode() != JIRA_SUCCESS_CODE) {
-                        throw new RuntimeException(this.prefixError + " Failed : HTTP error code : " + response.getStatusLine().getStatusCode());
-                    }
-
-                    httpClient.getConnectionManager().shutdown();
-                } catch (MalformedURLException e) {
-                    e.printStackTrace();
-                } catch (IOException e) {
-                    e.printStackTrace();
+                if (jsonResponse.getStatus() != JIRA_SUCCESS_CODE) {
+                    throw new RuntimeException(this.prefixError + " Failed : HTTP error code : " + jsonResponse.getStatus());
                 }
-            } else {
-                logger.printf("%s This issue is old; not reporting.%n", pInfo);
+
+                logger.printf("%s body: %n", pVerbose, jsonResponse.getBody());
+
+                // TODO: add logic here
+
+                Unirest.shutdown();
             }
+            catch (UnirestException e) {
+                e.printStackTrace();
+            }
+            catch (MalformedURLException e) {
+                e.printStackTrace();
+            }
+            catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            /*} else {
+                logger.printf("%s This issue is old; not reporting.%n", pInfo);
+            }*/
+
         }
     }
 
