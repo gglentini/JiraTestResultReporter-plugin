@@ -159,12 +159,13 @@ public class JiraReporter extends Notifier {
                           final AbstractBuild build,
                           final BuildListener listener) {
         PrintStream logger = listener.getLogger();
-        String url = this.serverAddress + "rest/api/latest/";
-         String jiraApiUrlSearch = url + "search";
+        String jiraAPIUrl = this.serverAddress + "rest/api/latest/";
+         String jiraAPIUrlSearch = jiraAPIUrl + "search";
+         String jiraAPIUrlIssues = jiraAPIUrl + "issue";
 
         for (CaseResult result : failedTests) {
             try {
-                HttpResponse<JsonNode> jsonResponse = Unirest.get(jiraApiUrlSearch)
+                HttpResponse<JsonNode> jsonResponse = Unirest.get(jiraAPIUrlSearch)
                         //.header("accept", "application/json")
                         //.field("jql", "project = TEST AND status in (Open, \"In Progress\") AND reporter in (lentini)")
                         .basicAuth(this.username, this.password)
@@ -186,9 +187,16 @@ public class JiraReporter extends Notifier {
                     throw new RuntimeException(this.prefixError + " Failed : HTTP error code : " + jsonResponse.getStatus());
                 }
 
-                logger.printf("%s body: %n", pVerbose, jsonResponse.getBody());
+                logger.printf("%s Existing tickets found: %n", pVerbose, jsonResponse.getBody().getObject().getInt("total"));
 
                 // TODO: add logic here
+                if (jsonResponse.getBody().getObject().getInt("total") != 0) {
+                    // ticket already available, add a comment
+                }
+                else {
+                    // create a new ticket
+
+                }
 
                 Unirest.shutdown();
             }
