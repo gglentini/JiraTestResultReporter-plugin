@@ -1,4 +1,5 @@
 package JiraTestResultReporter;
+
 import hudson.Launcher;
 import hudson.Extension;
 import hudson.FilePath;
@@ -15,29 +16,22 @@ import hudson.util.FormValidation;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 
+import org.json.JSONObject;
+
+import com.mashape.unirest.request.HttpRequestWithBody;
 import com.mashape.unirest.http.HttpResponse;
 import com.mashape.unirest.http.JsonNode;
 import com.mashape.unirest.http.Unirest;
 import com.mashape.unirest.http.exceptions.UnirestException;
-
-//import org.apache.http.HttpResponse;
-/*import org.apache.http.auth.AuthenticationException;
-import org.apache.http.auth.AuthScope;
-import org.apache.http.auth.Credentials;
-import org.apache.http.auth.UsernamePasswordCredentials;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.auth.BasicScheme;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.impl.client.AbstractHttpClient;*/
 
 import java.io.IOException;
 import java.io.PrintStream;
 import java.io.StringWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
-//import javax.json.*;
 
 public class JiraReporter extends Notifier {
 
@@ -161,16 +155,19 @@ public class JiraReporter extends Notifier {
         PrintStream logger = listener.getLogger();
         String jiraAPIUrl = this.serverAddress + "rest/api/latest/";
          String jiraAPIUrlSearch = jiraAPIUrl + "search";
-         String jiraAPIUrlIssues = jiraAPIUrl + "issue";
+         String jiraAPIUrlIssue = jiraAPIUrl + "issue";
 
         for (CaseResult result : failedTests) {
             try {
+                // check for tickets in JIRA
+                // GET search
+                // TODO: change to a POST request
                 HttpResponse<JsonNode> jsonResponse = Unirest.get(jiraAPIUrlSearch)
                         //.header("accept", "application/json")
                         //.field("jql", "project = TEST AND status in (Open, \"In Progress\") AND reporter in (lentini)")
                         .basicAuth(this.username, this.password)
-                        .queryString("jql", "project = TEST AND status in (Open, \"In Progress\") " +
-                                "AND reporter in (lentini) AND summary ~ \"Test " + result.getName() + " failed\"")
+                        .queryString("jql", "project = " + this.projectKey +  " AND status in (Open, \"In Progress\") " +
+                                "AND reporter in (" + this.username + ") AND summary ~ \"Test " + result.getName() + " failed\"")
                         .queryString("fields", "summary")
                         .asJson();
 
@@ -187,15 +184,56 @@ public class JiraReporter extends Notifier {
                     throw new RuntimeException(this.prefixError + " Failed : HTTP error code : " + jsonResponse.getStatus());
                 }
 
-                logger.printf("%s Existing tickets found: %n", pVerbose, jsonResponse.getBody().getObject().getInt("total"));
+                logger.printf("%s Existing tickets found: %d\n", pVerbose, jsonResponse.getBody().getObject().getInt("total"));
 
-                // TODO: add logic here
                 if (jsonResponse.getBody().getObject().getInt("total") != 0) {
                     // ticket already available, add a comment
                 }
                 else {
                     // create a new ticket
+                    // ticket fields
+                    String summary = "Test " + result.getName() + " failed";
+                    String description = "Test class: " + result.getClassName() + "\n\n" +
+                                            // TODO: fix this call
+                                            //"Jenkins job: " + build.getAbsoluteUrl() + "\n\n" +
+                                            "{noformat}\n" + result.getErrorDetails() + "\n{noformat}\n\n" +
+                                            "{noformat}\n" + result.getErrorStackTrace().replace(this.workspace.toString(), "") +
+                                            "\n{noformat}\n\n";
 
+                    // create a JSON structure out of the fields
+                    Map subfields = new HashMap();
+                    Map fields = new HashMap();
+                    Map projectMap = new HashMap();
+                    projectMap.put("key", this.projectKey);
+                    subfields.put("project", projectMap);
+                    subfields.put("summary", summary);
+                    subfields.put("description", description);
+                    fields.put("fields", subfields);
+                    JSONObject jsonFields = new JSONObject(fields);
+
+                    HttpRequestWithBody request = Unirest.post(jiraAPIUrlIssue);
+                    request.body(jsonFields.toString());
+
+                    // make POST issue request
+                    //TODO: POST is not working yetq
+                    HttpResponse<JsonNode> createIssueResponse = Unirest.post(jiraAPIUrlIssue)
+                            .header("accept", "application/json")
+                            .basicAuth(this.username, this.password)
+                            .body(jsonFields.toString())
+                            .asJson();
+
+                    debugLog(listener,
+                            String.format("statusLine: %s%n",
+                                    createIssueResponse.getStatusText())
+                    );
+                    debugLog(listener,
+                            String.format("statusCode: %d%n",
+                                    createIssueResponse.getStatus())
+                    );
+
+                    if (createIssueResponse.getStatus() != JIRA_SUCCESS_CODE) {
+                        throw new RuntimeException(this.prefixError + " Failed : HTTP error code : " + createIssueResponse.getStatus());
+                    }
                 }
 
                 Unirest.shutdown();
