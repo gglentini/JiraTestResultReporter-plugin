@@ -201,25 +201,26 @@ public class JiraReporter extends Notifier {
                                             "\n{noformat}\n\n";
 
                     // create a JSON structure out of the fields
-                    Map subfields = new HashMap();
-                    Map fields = new HashMap();
-                    Map projectMap = new HashMap();
-                    projectMap.put("key", this.projectKey);
-                    subfields.put("project", projectMap);
-                    subfields.put("summary", summary);
-                    subfields.put("description", description);
-                    fields.put("fields", subfields);
-                    JSONObject jsonFields = new JSONObject(fields);
+                    JSONObject jsonSubFields = new JSONObject();
+                    JSONObject projectFields = new JSONObject();
+                    JSONObject issueTypeFields = new JSONObject();
+                    JSONObject jsonFields = new JSONObject();
+                    projectFields.put("key", this.projectKey);
+                    issueTypeFields.put("name", "Bug");
+                    jsonSubFields.put("summary", summary).put("description", "description").put("project", projectFields)
+                                .put("issuetype", issueTypeFields);
+                    jsonFields.put("fields", jsonSubFields);
+                    JsonNode jsonNodeFields = new JsonNode(jsonFields.toString());
 
-                    HttpRequestWithBody request = Unirest.post(jiraAPIUrlIssue);
-                    request.body(jsonFields.toString());
+                    /*HttpRequestWithBody request = Unirest.post(jiraAPIUrlIssue);
+                    request.body(jsonFields.toString());*/
 
                     // make POST issue request
-                    //TODO: POST is not working yetq
+                    //TODO: POST is not working yet
                     HttpResponse<JsonNode> createIssueResponse = Unirest.post(jiraAPIUrlIssue)
                             .header("accept", "application/json")
                             .basicAuth(this.username, this.password)
-                            .body(jsonFields.toString())
+                            .body(jsonNodeFields)
                             .asJson();
 
                     debugLog(listener,
@@ -236,17 +237,18 @@ public class JiraReporter extends Notifier {
                     }
                 }
 
-                Unirest.shutdown();
+                //Unirest.shutdown();
             }
             catch (UnirestException e) {
+                logger.printf("%s Problems found while connecting to JIRA: %s\n", prefixError, e.toString());
                 e.printStackTrace();
             }
-            catch (MalformedURLException e) {
+/*            catch (MalformedURLException e) {
                 e.printStackTrace();
-            }
-            catch (IOException e) {
+            }*/
+/*            catch (IOException e) {
                 e.printStackTrace();
-            }
+            }*/
 
             /*} else {
                 logger.printf("%s This issue is old; not reporting.%n", pInfo);
