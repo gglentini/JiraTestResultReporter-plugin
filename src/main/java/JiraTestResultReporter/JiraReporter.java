@@ -11,6 +11,7 @@ import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Notifier;
 import hudson.tasks.Publisher;
 import hudson.tasks.junit.CaseResult;
+import hudson.tasks.junit.TestResultAction;
 import hudson.tasks.test.AbstractTestResultAction;
 import hudson.util.FormValidation;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -102,7 +103,8 @@ public class JiraReporter extends Notifier {
         debugLog(listener,
                  String.format("%s Workspace is %s%n", pInfo, this.workspace.toString())
                 );
-        AbstractTestResultAction<?> testResultAction = build.getAction(AbstractTestResultAction.class);
+        //AbstractTestResultAction<?> testResultAction = build.getAction(AbstractTestResultAction.class);
+        TestResultAction testResultAction = build.getAction(TestResultAction.class);
         if (testResultAction == null) {
             logger.printf("%s no test results found; nothing to do.%n", pInfo);
         }
@@ -217,6 +219,9 @@ public class JiraReporter extends Notifier {
 
                     // make POST issue request
                     //TODO: POST is not working yet
+                    // JIRA returns the exception
+                    // java.lang.RuntimeException: java.lang.RuntimeException: org.json.JSONException:
+                    // A JSONArray text must start with '[' at 1 [character 2 line 1]
                     HttpResponse<JsonNode> createIssueResponse = Unirest.post(jiraAPIUrlIssue)
                             .header("accept", "application/json")
                             .basicAuth(this.username, this.password)
