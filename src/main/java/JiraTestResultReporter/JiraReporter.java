@@ -18,6 +18,7 @@ import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import com.mashape.unirest.request.HttpRequestWithBody;
 import com.mashape.unirest.http.HttpResponse;
@@ -30,8 +31,6 @@ import java.io.PrintStream;
 import java.io.StringWriter;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.List;
 
 public class JiraReporter extends Notifier {
@@ -190,6 +189,17 @@ public class JiraReporter extends Notifier {
 
                 if (jsonResponse.getBody().getObject().getInt("total") != 0) {
                     // ticket already available, add a comment
+                    JSONArray issues = jsonResponse.getBody().getObject().getJSONArray("issues");
+
+                    //for (int i=0; issues.length(); ++i) {
+                        String jiraAPIUrlIssueComment = jiraAPIUrlIssue + "/" + issues.getJSONObject(0).getString("key") + "/comment";
+
+                        HttpResponse<JsonNode> createIssueResponse = Unirest.post(jiraAPIUrlIssueComment)
+                                .header("accept", "application/json")
+                                .basicAuth(this.username, this.password)
+                                //.body(jsonNodeFields)
+                                .asJson();
+                    //}
                 }
                 else {
                     // create a new ticket
@@ -209,7 +219,7 @@ public class JiraReporter extends Notifier {
                     JSONObject jsonFields = new JSONObject();
                     projectFields.put("key", this.projectKey);
                     issueTypeFields.put("name", "Bug");
-                    jsonSubFields.put("summary", summary).put("description", "description").put("project", projectFields)
+                    jsonSubFields.put("summary", summary).put("description", description).put("project", projectFields)
                                 .put("issuetype", issueTypeFields);
                     jsonFields.put("fields", jsonSubFields);
                     JsonNode jsonNodeFields = new JsonNode(jsonFields.toString());
