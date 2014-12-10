@@ -11,6 +11,9 @@
   <f:entry title="Password" field="password">
     <f:password field="password"/>
   </f:entry>
+  <f:entry title="Query Jira" field="queryJira">
+    <f:checkbox field="queryJira" checked="${queryJira}"/>
+  </f:entry>
   <f:entry title="Create issues for *all* errors" field="createAllFlag">
     <f:checkbox field="createAllFlag" checked="${createAllFlag}"/>
   </f:entry>
