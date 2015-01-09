@@ -36,6 +36,7 @@ public class JiraReporter extends Notifier {
     //private static final Integer[] JIRA_SUCCESS_CODES = {201, 200};
     private static final int JIRA_CREATED_CODE = 201;
     private static final int JIRA_SUCCESS_CODE = 200;
+    private static final int JIRA_NOCONTENT_CODE = 204;
     private static final String JIRA_API_URL = "rest/api/latest/";
     private static final String PluginName = new String("[JiraTestResultReporter]");
     private final String pInfo = String.format("%s [INFO]", PluginName);
@@ -175,7 +176,8 @@ public class JiraReporter extends Notifier {
                 .basicAuth(this.username, this.password)
                 .queryString("jql", "project = " + this.projectKey + " AND status in (Open, \"In Progress\") " +
                         "AND reporter in (" + this.username + ") AND summary ~ \"Test " + failedTest.getName() + " failed\"")
-                .queryString("fields", "summary")
+                //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
+                .queryString("fields", "summary,customfield_14747")
                 .asJson();
 
         debugLog(listener,
@@ -233,6 +235,52 @@ public class JiraReporter extends Notifier {
         return addCommentResponse;
     }
 
+    HttpResponse<JsonNode> updateFailures(final JSONObject issue,
+                                          final AbstractBuild build,
+                                          final BuildListener listener) throws UnirestException {
+        //a method to get the ID of the "Failures" (or whatever the name will be) might be needed
+        //as the request to update an existing issue (PUT issue/{keyOrName}
+        //wants as body for example the JSON structure
+//                        {
+//                            "update": {
+//                            "customfield_10000": [
+//                            {
+//                                "set": 2
+//                            }
+//                            ]
+//                        }
+//                        }
+        PrintStream logger = listener.getLogger();
+
+        JSONObject body = new JSONObject();
+        JSONObject setField = new JSONObject();
+        JSONArray subField = new JSONArray();
+        JSONObject field = new JSONObject();
+
+        //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
+        setField.put("set", (issue.getJSONObject("fields").getInt("customfield_14747")) + 1);
+        subField.put(setField);
+        //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
+        field.put("customfield_14747", subField);
+        body.put("update", field);
+        JsonNode jsonBody = new JsonNode(body.toString());
+
+        logger.printf("%s Updating the counter of failures of %s\n", pInfo, this.serverAddress + "browse/" + issue.getString("key"));
+        HttpResponse<JsonNode> response = Unirest.put(this.serverAddress+JIRA_API_URL+"issue/"+issue.getString("key"))
+                .header("accept", "application/json")
+                .header("content-type", "application/json")
+                .basicAuth(this.username, this.password)
+                .body(jsonBody)
+                .asJson();
+
+        if (response.getStatus() != JIRA_NOCONTENT_CODE) {
+            throw new RuntimeException(this.prefixError + " Failed while updating the failures counter: HTTP error code : " + response.getStatus());
+        }
+
+        return response;
+
+    }
+
     HttpResponse<JsonNode> createJiraTicket(final CaseResult failedTest,
                                          final AbstractBuild build,
                                          final BuildListener listener) throws UnirestException {
@@ -253,10 +301,16 @@ public class JiraReporter extends Notifier {
         JSONObject projectFields = new JSONObject();
         JSONObject issueTypeFields = new JSONObject();
         JSONObject jsonFields = new JSONObject();
+        JSONObject defaultComponent = new JSONObject("{name:\"UNKNOWN\"}");
+        JSONArray component = new JSONArray();
+
+        component.put(defaultComponent);
         projectFields.put("key", this.projectKey);
         issueTypeFields.put("name", "Bug");
         jsonSubFields.put("summary", summary).put("description", description).put("project", projectFields)
-                        .put("issuetype", issueTypeFields);
+                        .put("issuetype", issueTypeFields).put("components", component)
+                        //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
+                        .put("customfield_14747", 1);
         jsonFields.put("fields", jsonSubFields);
         JsonNode jsonNodeFields = new JsonNode(jsonFields.toString());
 
@@ -286,7 +340,7 @@ public class JiraReporter extends Notifier {
         return createIssueResponse;
     }
 
-     void updateJira(final List<CaseResult> failedTests,
+    void updateJira(final List<CaseResult> failedTests,
                           final AbstractBuild build,
                           final BuildListener listener) {
          PrintStream logger = listener.getLogger();
@@ -300,14 +354,17 @@ public class JiraReporter extends Notifier {
                     // ticket already available, add a comment
                     logger.printf("%s Existing ticket(s) found for: %s\n", pInfo, failedTest.getFullName());
                     JSONArray issues = jsonResponse.getBody().getObject().getJSONArray("issues");
-                    // create a comment for every ticket found
-                    // ideally it should only be 1
+
                     for (int i=0; i<issues.length(); ++i) {
+                        // create a comment for every ticket found
+                        // ideally it should only be 1
                         HttpResponse<JsonNode> response = createJiraComment(issues.getJSONObject(i), failedTest, build, listener);
+                        // increment also the "Failures" counter
+                        response = updateFailures(issues.getJSONObject(i), build, listener);
                     }
                 }
                 else {
-                    // create a new ticket
+                    // create a brand new ticket
                     logger.printf("%s No ticket(s) found for: %s\n", pInfo, failedTest.getFullName());
                     HttpResponse<JsonNode> response = createJiraTicket(failedTest, build, listener);
                 }
@@ -329,7 +386,7 @@ public class JiraReporter extends Notifier {
                          final AbstractBuild build,
                          final BuildListener listener) {
         PrintStream logger = listener.getLogger();
-        String url = this.serverAddress + "rest/api/2/issue/";
+        String url = this.serverAddress + JIRA_API_URL + "issue/";
 
         for (CaseResult result : failedTests) {
             if ((result.getAge() == 1) || (this.createAllFlag)) {
