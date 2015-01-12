@@ -21,6 +21,7 @@ import hudson.util.FormValidation;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.json.JSONException;
 
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
@@ -36,6 +37,7 @@ import java.util.List;
 public class JiraReporter extends Notifier {
 
     private static final String JIRA_API_URL = "rest/api/latest/";
+    private static final String failuresFieldName = "AutomatedTestFailures";
     private static final String PluginName = new String("[JiraTestResultReporter]");
     private final String pInfo = String.format("%s [INFO]", PluginName);
     private final String pDebug = String.format("%s [DEBUG]", PluginName);
@@ -50,6 +52,7 @@ public class JiraReporter extends Notifier {
     public boolean debugFlag;
     public boolean verboseDebugFlag;
     public boolean createAllFlag;
+    public String failuresFieldID;
     private transient FilePath workspace;
 
     @DataBoundConstructor
@@ -117,7 +120,17 @@ public class JiraReporter extends Notifier {
                 createJiraIssue(failedTests, build, listener);
             }
             else {
-                // interact with Jira
+                // interaction with Jira
+                // get the ID of the field we use as a failures counter
+                // as it is implemented as a JIRA 'custom field', the ID is NOT the name we set.
+                try {
+                    this.failuresFieldID = getFailuresFieldID(listener);
+                }
+                catch (UnirestException e) {
+                    logger.printf("%s\n", e.getMessage());
+                    e.printStackTrace();
+                }
+                // update JIRA, creating a new ticket or modifying an existing one
                 updateJira(failedTests, build, listener);
             }
             logger.printf("%s Done.%n", pInfo);
@@ -159,6 +172,38 @@ public class JiraReporter extends Notifier {
         logger.printf("%s %s%n", pDebug, message);
     }
 
+    String getFailuresFieldID(final BuildListener listener) throws UnirestException {
+        // GET /field
+
+        String jiraAPIUrlField = this.serverAddress + JIRA_API_URL + "field";
+        PrintStream logger = listener.getLogger();
+        String fieldId = "";
+
+        // getting all the fields available for the configured JIRA project
+        HttpResponse<JsonNode> jsonResponse = Unirest.get(jiraAPIUrlField)
+                                    //.header("accept", "application/json")
+                                    .basicAuth(this.username, this.password)
+                                    .asJson();
+
+
+        JSONArray fields = jsonResponse.getBody().getArray();
+
+        // looking for the field with name = AutomatedTestFailures
+        for (int i=0; i<fields.length(); ++i) {
+            JSONObject field = fields.getJSONObject(i);
+            if (field.getString("name").equals(failuresFieldName)) {
+                fieldId = field.getString("id");
+                break;
+            }
+        }
+
+        if (fieldId.isEmpty()) {
+            throw new RuntimeException(this.prefixError + " Failed while checking the provided JIRA project, maybe it has no field named '" + failuresFieldName +
+            "' required to use this plugin.");
+        }
+        return fieldId;
+    }
+
     HttpResponse<JsonNode> getJiraTickets(final CaseResult failedTest,
                                           final BuildListener listener) throws UnirestException {
         String jiraAPIUrlSearch = this.serverAddress + JIRA_API_URL + "search";
@@ -174,8 +219,7 @@ public class JiraReporter extends Notifier {
                 .basicAuth(this.username, this.password)
                 .queryString("jql", "project = " + this.projectKey + " AND status in (Open, \"In Progress\") " +
                         "AND reporter in (" + this.username + ") AND summary ~ \"Test " + failedTest.getName() + " failed\"")
-                //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
-                .queryString("fields", "summary,customfield_14747")
+                .queryString("fields", "summary,"+this.failuresFieldID)
                 .asJson();
 
         debugLog(listener,
@@ -202,6 +246,7 @@ public class JiraReporter extends Notifier {
         String jiraAPIUrlIssueComment = this.serverAddress + JIRA_API_URL +
                                         "issue/" + issue.getString("key") + "/comment";
 
+        // building the comment content, adding the error message and trace
         JSONObject body = new JSONObject();
         body.put("body", "The same test has failed in " + build.getAbsoluteUrl() +
                  "\n\nError message: {noformat}\n" + failedTest.getErrorDetails() + "\n{noformat}\n\n" +
@@ -236,18 +281,6 @@ public class JiraReporter extends Notifier {
     HttpResponse<JsonNode> updateFailures(final JSONObject issue,
                                           final AbstractBuild build,
                                           final BuildListener listener) throws UnirestException {
-        //a method to get the ID of the "Failures" (or whatever the name will be) might be needed
-        //as the request to update an existing issue (PUT issue/{keyOrName}
-        //wants as body for example the JSON structure
-//                        {
-//                            "update": {
-//                            "customfield_10000": [
-//                            {
-//                                "set": 2
-//                            }
-//                            ]
-//                        }
-//                        }
         PrintStream logger = listener.getLogger();
 
         JSONObject body = new JSONObject();
@@ -255,11 +288,17 @@ public class JiraReporter extends Notifier {
         JSONArray subField = new JSONArray();
         JSONObject field = new JSONObject();
 
-        //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
-        setField.put("set", (issue.getJSONObject("fields").getInt("customfield_14747")) + 1);
+        // updating the counter and building the request body
+        try {
+            setField.put("set", (issue.getJSONObject("fields").getInt(this.failuresFieldID)) + 1);
+        }
+        catch (JSONException e) {
+            throw new RuntimeException(this.prefixError + " Failed while checking the provided JIRA project, maybe it has no field named '" + failuresFieldName +
+                    "' required to use this plugin.");
+        }
+
         subField.put(setField);
-        //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
-        field.put("customfield_14747", subField);
+        field.put(this.failuresFieldID, subField);
         body.put("update", field);
         JsonNode jsonBody = new JsonNode(body.toString());
 
@@ -307,8 +346,7 @@ public class JiraReporter extends Notifier {
         issueTypeFields.put("name", "Bug");
         jsonSubFields.put("summary", summary).put("description", description).put("project", projectFields)
                         .put("issuetype", issueTypeFields).put("components", component)
-                        //TODO a method to get the ID of the "Failures" (or whatever the name will be) might be needed
-                        .put("customfield_14747", 1);
+                        .put(this.failuresFieldID, 1);
         jsonFields.put("fields", jsonSubFields);
         JsonNode jsonNodeFields = new JsonNode(jsonFields.toString());
 
