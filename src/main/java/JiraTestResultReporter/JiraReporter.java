@@ -25,18 +25,16 @@ import org.json.JSONObject;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 
+import org.apache.http.HttpStatus;
+
 import java.io.PrintStream;
-import java.io.IOException;
+//import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.List;
 
 public class JiraReporter extends Notifier {
 
-    //private static final Integer[] JIRA_SUCCESS_CODES = {201, 200};
-    private static final int JIRA_CREATED_CODE = 201;
-    private static final int JIRA_SUCCESS_CODE = 200;
-    private static final int JIRA_NOCONTENT_CODE = 204;
     private static final String JIRA_API_URL = "rest/api/latest/";
     private static final String PluginName = new String("[JiraTestResultReporter]");
     private final String pInfo = String.format("%s [INFO]", PluginName);
@@ -189,7 +187,7 @@ public class JiraReporter extends Notifier {
                         jsonResponse.getStatus())
         );
 
-        if (jsonResponse.getStatus() != JIRA_SUCCESS_CODE) {
+        if (jsonResponse.getStatus() != HttpStatus.SC_OK) {
             throw new RuntimeException(this.prefixError + " Failed while searching for issues: HTTP error code : " + jsonResponse.getStatus());
         }
 
@@ -228,7 +226,7 @@ public class JiraReporter extends Notifier {
                         addCommentResponse.getStatus())
         );
 
-        if (addCommentResponse.getStatus() != JIRA_CREATED_CODE) {
+        if (addCommentResponse.getStatus() != HttpStatus.SC_CREATED) {
             throw new UnirestException(this.prefixError + " Failed while adding a comment: HTTP error code : " + addCommentResponse.getStatus());
         }
 
@@ -273,7 +271,7 @@ public class JiraReporter extends Notifier {
                 .body(jsonBody)
                 .asJson();
 
-        if (response.getStatus() != JIRA_NOCONTENT_CODE) {
+        if (response.getStatus() != HttpStatus.SC_NO_CONTENT) {
             throw new RuntimeException(this.prefixError + " Failed while updating the failures counter: HTTP error code : " + response.getStatus());
         }
 
@@ -331,7 +329,7 @@ public class JiraReporter extends Notifier {
                         createIssueResponse.getStatus())
         );
 
-        if (createIssueResponse.getStatus() != JIRA_CREATED_CODE) {
+        if (createIssueResponse.getStatus() != HttpStatus.SC_CREATED) {
             throw new UnirestException(this.prefixError + " Failed while creating an issue: HTTP error code : " + createIssueResponse.getStatus());
         }
 
